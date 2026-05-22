@@ -217,6 +217,80 @@ textarea:focus {
   padding: 2px 7px;
 }
 
+.lab-game-tabs,
+.lab-section-tabs {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 14px;
+}
+
+.lab-game-tab,
+.lab-section-tab {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.lab-game-tab.active,
+.lab-section-tab.active {
+  background: rgba(36, 214, 255, 0.16);
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+
+.lab-section-tabs {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.lab-table-header {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+}
+
+.lab-table-header strong {
+  color: var(--text);
+  font-size: 18px;
+}
+
+.lab-wrap {
+  max-height: 520px;
+}
+
+.lab-table {
+  min-width: 1320px;
+}
+
+.heat {
+  color: #07100a;
+  font-weight: 800;
+  text-align: center;
+}
+
+.heat.cool {
+  background: #c84e5a;
+}
+
+.heat.mid {
+  background: #e7c760;
+}
+
+.heat.good {
+  background: #83bd65;
+}
+
+.heat.elite {
+  background: #3b914d;
+  color: #f5fff6;
+}
+
+.lab-muted {
+  color: var(--muted);
+}
+
 .calendar-layout {
   display: grid;
   grid-template-columns: 350px minmax(0, 1fr);
@@ -390,6 +464,25 @@ th {
   background: #11141b;
   z-index: 1;
   text-transform: uppercase;
+}
+
+th[data-sort-key] {
+  cursor: pointer;
+  user-select: none;
+}
+
+th[data-sort-key]::after {
+  content: " sort";
+  color: #657085;
+  font-size: 10px;
+  font-weight: 800;
+  margin-left: 4px;
+  text-transform: none;
+}
+
+th[data-sort-key].active-sort::after {
+  content: " " attr(data-sort-dir);
+  color: var(--cyan);
 }
 
 td input,
@@ -634,6 +727,11 @@ td select {
   .market-tab {
     flex: 0 0 auto;
     white-space: nowrap;
+  }
+
+  .lab-game-tabs,
+  .lab-section-tabs {
+    padding: 12px;
   }
 
   .ladder-grid {

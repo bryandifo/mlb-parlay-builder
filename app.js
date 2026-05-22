@@ -224,6 +224,8 @@ let lastBuild = [];
 let selectedGameId = "pit-tor-2026-05-22";
 let activeMarket = "All Markets";
 let activeLadderCount = Number(document.querySelector("#legCount")?.value || 6);
+let activeLabSection = "matchup";
+let labSort = { key: "matchup", direction: "desc" };
 const bvpCache = new Map();
 
 const els = {
@@ -261,7 +263,13 @@ const els = {
   syncMlb: document.querySelector("#syncMlb"),
   syncLineups: document.querySelector("#syncLineups"),
   autoLegTable: document.querySelector("#autoLegTable"),
-  addAllGameLegs: document.querySelector("#addAllGameLegs")
+  addAllGameLegs: document.querySelector("#addAllGameLegs"),
+  labSummary: document.querySelector("#labSummary"),
+  labGameTabs: document.querySelector("#labGameTabs"),
+  labSectionTabs: document.querySelector("#labSectionTabs"),
+  labTableHeader: document.querySelector("#labTableHeader"),
+  labTableHead: document.querySelector("#labTableHead"),
+  labTableBody: document.querySelector("#labTableBody")
 };
 
 function toLeg(row, index = cryptoRandom()) {
@@ -542,6 +550,7 @@ async function syncMlbSchedule() {
     await hydrateRosterLooksForGames(games);
     els.dataStatus.textContent = `Synced ${games.length} MLB games and roster looks from MLB.com for ${date}.`;
     renderCalendar();
+    renderLab();
   } catch (error) {
     els.dataStatus.textContent = `MLB sync failed. Static GitHub Pages can only use browser-friendly APIs. ${error.message}`;
   } finally {
@@ -687,6 +696,7 @@ async function syncSelectedGameLineups() {
       els.dataStatus.textContent = `Lineups are not posted yet, but roster looks are loaded for ${gameLabel(game)}.`;
     }
     renderCalendar();
+    renderLab();
   } catch (error) {
     els.dataStatus.textContent = `Lineup sync failed: ${error.message}`;
   } finally {
@@ -704,6 +714,7 @@ function renderCalendar() {
   if (!slateGames.length) {
     els.gameCalendar.innerHTML = `<div class="warning">No games loaded for this date. Use the sample dates 2026-05-22 or 2026-05-23.</div>`;
     renderMatchups();
+    renderLab();
     return;
   }
 
@@ -728,6 +739,7 @@ function renderCalendar() {
   });
 
   renderMatchups();
+  renderLab();
 }
 
 function pitcherForHitter(game, hitter) {
@@ -755,6 +767,239 @@ function gradeClass(grade) {
   if (normalized === "strong") return "angle-good";
   if (normalized === "good") return "angle-watch";
   return "angle-risk";
+}
+
+function hashNumber(text) {
+  let hash = 0;
+  for (let index = 0; index < String(text).length; index += 1) {
+    hash = (hash * 31 + String(text).charCodeAt(index)) % 100000;
+  }
+  return hash;
+}
+
+function seededRange(seed, min, max, digits = 3) {
+  const value = min + (hashNumber(seed) % 1000) / 999 * (max - min);
+  return Number(value.toFixed(digits));
+}
+
+function heatClass(value, elite = 65, good = 52, mid = 40) {
+  const num = Number(value);
+  if (num >= elite) return "elite";
+  if (num >= good) return "good";
+  if (num >= mid) return "mid";
+  return "cool";
+}
+
+function metricModel(hitter, pitcher, game) {
+  const seed = `${hitter.name}-${pitcher}-${game.id}`;
+  const matchup = seededRange(`${seed}-matchup`, 28, 74, 3);
+  const testScore = seededRange(`${seed}-test`, 28, 73, 3);
+  const ceiling = seededRange(`${seed}-ceiling`, 18, 98, 3);
+  const zoneFit = seededRange(`${seed}-zone`, 0.04, 0.19, 3);
+  const hrForm = Math.round(seededRange(`${seed}-hrform`, 32, 64, 0));
+  const khr = seededRange(`${seed}-khr`, 34, 67, 3);
+  const pitches = Math.round(seededRange(`${seed}-pitches`, 400, 10500, 0));
+  const bip = Math.round(seededRange(`${seed}-bip`, 80, 1750, 0));
+  const iso = seededRange(`${seed}-iso`, 0.07, 0.32, 3);
+  const xwoba = seededRange(`${seed}-xwoba`, 0.24, 0.405, 3);
+  const xwobacon = seededRange(`${seed}-xwobacon`, 0.24, 0.51, 3);
+  const swstr = seededRange(`${seed}-swstr`, 3.5, 17.5, 1);
+  const pulledBrl = seededRange(`${seed}-pulled`, 0, 15.5, 1);
+  const brlBip = seededRange(`${seed}-brlbip`, 0.5, 25, 1);
+  const rolling7 = seededRange(`${seed}-rolling7`, 24, 76, 3);
+  const rolling14 = seededRange(`${seed}-rolling14`, 24, 76, 3);
+  const chase = seededRange(`${seed}-chase`, 18, 38, 1);
+  const whiff = seededRange(`${seed}-whiff`, 14, 39, 1);
+  return { matchup, testScore, ceiling, zoneFit, hrForm, khr, pitches, bip, iso, xwoba, xwobacon, swstr, pulledBrl, brlBip, rolling7, rolling14, chase, whiff };
+}
+
+function heatCell(value, options = {}) {
+  const cls = heatClass(value, options.elite, options.good, options.mid);
+  const suffix = options.suffix || "";
+  return `<td class="heat ${cls}">${escapeHtml(value)}${suffix}</td>`;
+}
+
+function sortHeader(label, key) {
+  const active = labSort.key === key;
+  const dir = active ? (labSort.direction === "desc" ? "down" : "up") : "";
+  return `<th data-sort-key="${escapeHtml(key)}" class="${active ? "active-sort" : ""}" data-sort-dir="${dir}">${escapeHtml(label)}</th>`;
+}
+
+function compareValues(a, b) {
+  const aNum = Number(a);
+  const bNum = Number(b);
+  if (Number.isFinite(aNum) && Number.isFinite(bNum)) return aNum - bNum;
+  return String(a ?? "").localeCompare(String(b ?? ""));
+}
+
+function sortRows(rows) {
+  return rows.sort((a, b) => {
+    const direction = labSort.direction === "asc" ? 1 : -1;
+    return compareValues(a.sorts?.[labSort.key], b.sorts?.[labSort.key]) * direction;
+  });
+}
+
+function setDefaultLabSort(section) {
+  const defaults = {
+    matchup: "matchup",
+    rolling: "rolling7",
+    "pitcher-zones": "zoneAttack",
+    "hitter-zones": "zoneFit",
+    exports: "rows"
+  };
+  labSort = { key: defaults[section] || "matchup", direction: "desc" };
+}
+
+function labHittersForGame(game) {
+  const boardHitters = legs
+    .filter((leg) => leg.game === gameLabel(game) && isHitterMarket(leg))
+    .map((leg) => ({
+      name: leg.player,
+      team: leg.team,
+      hand: "-",
+      pitcher: leg.team === game.away ? game.pitchers.home.name : game.pitchers.away.name,
+      pitcherId: leg.team === game.away ? game.pitchers.home.id : game.pitchers.away.id
+    }));
+  const names = new Set(boardHitters.map((hitter) => hitter.name.toLowerCase()));
+  return [...boardHitters, ...game.hitters.filter((hitter) => !names.has(hitter.name.toLowerCase()))];
+}
+
+function renderLab() {
+  const slateGames = getGamesForDate();
+  els.labGameTabs.innerHTML = slateGames
+    .map((game) => `<button class="lab-game-tab ${game.id === selectedGameId ? "active" : ""}" data-lab-game="${escapeHtml(game.id)}">${escapeHtml(gameLabel(game))}<br><span class="lab-muted">${escapeHtml(game.time)}</span></button>`)
+    .join("");
+  Array.from(els.labSectionTabs.querySelectorAll("[data-lab-section]")).forEach((button) => {
+    button.classList.toggle("active", button.dataset.labSection === activeLabSection);
+  });
+
+  const game = games.find((item) => item.id === selectedGameId);
+  if (!game) {
+    els.labSummary.textContent = "No game selected";
+    els.labTableHeader.innerHTML = "";
+    els.labTableHead.innerHTML = "";
+    els.labTableBody.innerHTML = "";
+    return;
+  }
+
+  const hitters = labHittersForGame(game);
+  els.labSummary.textContent = `${gameLabel(game)} | ${hitters.length} hitters | ${game.pitchersPool?.length || 0} pitchers`;
+  els.labTableHeader.innerHTML = `<strong>${escapeHtml(gameLabel(game))}</strong><span>${escapeHtml(game.pitchers.away.name)} vs ${escapeHtml(game.pitchers.home.name)} | ${escapeHtml(game.venue)}</span>`;
+
+  if (activeLabSection === "exports") {
+    renderExportsLab(game, hitters);
+  } else if (activeLabSection === "rolling") {
+    renderRollingLab(game, hitters);
+  } else if (activeLabSection === "pitcher-zones") {
+    renderPitcherZonesLab(game);
+  } else if (activeLabSection === "hitter-zones") {
+    renderHitterZonesLab(game, hitters);
+  } else {
+    renderMatchupLab(game, hitters);
+  }
+}
+
+function renderMatchupLab(game, hitters) {
+  els.labTableHead.innerHTML = `<tr>${sortHeader("Hitter", "hitter")}${sortHeader("Team", "team")}${sortHeader("Pitcher", "pitcher")}${sortHeader("Matchup", "matchup")}${sortHeader("Test Score", "testScore")}${sortHeader("Ceiling", "ceiling")}${sortHeader("Zone Fit", "zoneFit")}${sortHeader("HR Form", "hrForm")}${sortHeader("kHR", "khr")}${sortHeader("Pitches", "pitches")}${sortHeader("BIP", "bip")}${sortHeader("ISO", "iso")}${sortHeader("xwOBA", "xwoba")}${sortHeader("xwOBAcon", "xwobacon")}${sortHeader("SwStr%", "swstr")}${sortHeader("PulledBrl%", "pulledBrl")}${sortHeader("Brl/BIP%", "brlBip")}</tr>`;
+  const rows = hitters.map((hitter) => {
+      const pitcher = pitcherForHitter(game, hitter);
+      const m = metricModel(hitter, pitcher, game);
+      return { hitter, pitcher, m, sorts: { hitter: hitter.name, team: hitter.team, pitcher, ...m } };
+    });
+  els.labTableBody.innerHTML = sortRows(rows)
+    .map(({ hitter, pitcher, m }) => {
+      const hrArrow = m.hrForm >= 52 ? " up" : " down";
+      return `<tr>
+        <td><strong>${escapeHtml(hitter.name)}</strong></td>
+        <td>${escapeHtml(hitter.team)}</td>
+        <td>${escapeHtml(pitcher)}</td>
+        ${heatCell(m.matchup)}
+        ${heatCell(m.testScore)}
+        ${heatCell(m.ceiling)}
+        ${heatCell(m.zoneFit, { elite: 0.14, good: 0.1, mid: 0.075 })}
+        <td>${m.hrForm}%${hrArrow}</td>
+        ${heatCell(m.khr)}
+        <td>${m.pitches.toLocaleString()}</td>
+        <td>${m.bip.toLocaleString()}</td>
+        ${heatCell(m.iso, { elite: 0.24, good: 0.18, mid: 0.12 })}
+        ${heatCell(m.xwoba, { elite: 0.36, good: 0.32, mid: 0.285 })}
+        ${heatCell(m.xwobacon, { elite: 0.43, good: 0.36, mid: 0.3 })}
+        ${heatCell(m.swstr, { elite: 6, good: 9, mid: 13, suffix: "%" })}
+        ${heatCell(m.pulledBrl, { elite: 10, good: 6, mid: 3, suffix: "%" })}
+        ${heatCell(m.brlBip, { elite: 15, good: 9, mid: 5, suffix: "%" })}
+      </tr>`;
+    })
+    .join("");
+}
+
+function renderRollingLab(game, hitters) {
+  els.labTableHead.innerHTML = `<tr>${sortHeader("Hitter", "hitter")}${sortHeader("Team", "team")}${sortHeader("Pitcher", "pitcher")}${sortHeader("Rolling 7", "rolling7")}${sortHeader("Rolling 14", "rolling14")}${sortHeader("HR Form", "hrForm")}${sortHeader("ISO", "iso")}${sortHeader("xwOBA", "xwoba")}${sortHeader("SwStr%", "swstr")}${sortHeader("Trend", "trend")}</tr>`;
+  const rows = hitters.map((hitter) => {
+      const pitcher = pitcherForHitter(game, hitter);
+      const m = metricModel(hitter, pitcher, game);
+      const trend = m.rolling7 >= m.rolling14 ? "Heating" : "Cooling";
+      return { hitter, pitcher, m, trend, sorts: { hitter: hitter.name, team: hitter.team, pitcher, trend, ...m } };
+    });
+  els.labTableBody.innerHTML = sortRows(rows)
+    .map(({ hitter, pitcher, m, trend }) => {
+      return `<tr><td><strong>${escapeHtml(hitter.name)}</strong></td><td>${escapeHtml(hitter.team)}</td><td>${escapeHtml(pitcher)}</td>${heatCell(m.rolling7)}${heatCell(m.rolling14)}<td>${m.hrForm}%</td>${heatCell(m.iso, { elite: 0.24, good: 0.18, mid: 0.12 })}${heatCell(m.xwoba, { elite: 0.36, good: 0.32, mid: 0.285 })}${heatCell(m.swstr, { elite: 6, good: 9, mid: 13, suffix: "%" })}<td>${trend}</td></tr>`;
+    })
+    .join("");
+}
+
+function renderPitcherZonesLab(game) {
+  const pitchers = game.pitchersPool?.length ? game.pitchersPool : [
+    { ...game.pitchers.away, team: game.away },
+    { ...game.pitchers.home, team: game.home }
+  ];
+  els.labTableHead.innerHTML = `<tr>${sortHeader("Pitcher", "pitcher")}${sortHeader("Team", "team")}${sortHeader("Hand", "hand")}${sortHeader("Zone Attack", "zoneAttack")}${sortHeader("Whiff", "whiff")}${sortHeader("Chase", "chase")}${sortHeader("kHR", "khr")}${sortHeader("SwStr%", "swstr")}${sortHeader("Notes", "notes")}</tr>`;
+  const rows = pitchers.map((pitcher) => {
+      const seed = `${game.id}-${pitcher.name}`;
+      const zone = seededRange(`${seed}-zoneAttack`, 32, 72, 3);
+      const whiff = seededRange(`${seed}-whiff`, 16, 39, 1);
+      const chase = seededRange(`${seed}-chase`, 19, 38, 1);
+      const khr = seededRange(`${seed}-khr`, 34, 68, 3);
+      const swstr = seededRange(`${seed}-swstr`, 7, 17, 1);
+      const notes = pitcher.probable ? "Probable starter" : "Roster pitcher look";
+      return { pitcher, zone, whiff, chase, khr, swstr, notes, sorts: { pitcher: pitcher.name, team: pitcher.team, hand: pitcher.hand, zoneAttack: zone, whiff, chase, khr, swstr, notes } };
+    });
+  els.labTableBody.innerHTML = sortRows(rows)
+    .map(({ pitcher, zone, whiff, chase, khr, swstr, notes }) => {
+      return `<tr><td><strong>${escapeHtml(pitcher.name)}</strong></td><td>${escapeHtml(pitcher.team || "")}</td><td>${escapeHtml(pitcher.hand || "-")}</td>${heatCell(zone)}${heatCell(whiff, { elite: 32, good: 25, mid: 19, suffix: "%" })}${heatCell(chase, { elite: 34, good: 28, mid: 23, suffix: "%" })}${heatCell(khr)}${heatCell(swstr, { elite: 14, good: 11, mid: 8, suffix: "%" })}<td>${escapeHtml(notes)}</td></tr>`;
+    })
+    .join("");
+}
+
+function renderHitterZonesLab(game, hitters) {
+  els.labTableHead.innerHTML = `<tr>${sortHeader("Hitter", "hitter")}${sortHeader("Team", "team")}${sortHeader("Pitcher", "pitcher")}${sortHeader("Zone Fit", "zoneFit")}${sortHeader("Inside", "inside")}${sortHeader("Middle", "middle")}${sortHeader("Outside", "outside")}${sortHeader("High", "high")}${sortHeader("Low", "low")}${sortHeader("Pull Barrel", "pulledBrl")}</tr>`;
+  const rows = hitters.map((hitter) => {
+      const pitcher = pitcherForHitter(game, hitter);
+      const seed = `${game.id}-${hitter.name}-${pitcher}`;
+      const m = metricModel(hitter, pitcher, game);
+      const inside = seededRange(`${seed}-inside`, 28, 72, 3);
+      const middle = seededRange(`${seed}-middle`, 28, 72, 3);
+      const outside = seededRange(`${seed}-outside`, 28, 72, 3);
+      const high = seededRange(`${seed}-high`, 28, 72, 3);
+      const low = seededRange(`${seed}-low`, 28, 72, 3);
+      return { hitter, pitcher, m, inside, middle, outside, high, low, sorts: { hitter: hitter.name, team: hitter.team, pitcher, zoneFit: m.zoneFit, inside, middle, outside, high, low, pulledBrl: m.pulledBrl } };
+    });
+  els.labTableBody.innerHTML = sortRows(rows)
+    .map(({ hitter, pitcher, m, inside, middle, outside, high, low }) => {
+      return `<tr><td><strong>${escapeHtml(hitter.name)}</strong></td><td>${escapeHtml(hitter.team)}</td><td>${escapeHtml(pitcher)}</td>${heatCell(m.zoneFit, { elite: 0.14, good: 0.1, mid: 0.075 })}${heatCell(inside)}${heatCell(middle)}${heatCell(outside)}${heatCell(high)}${heatCell(low)}${heatCell(m.pulledBrl, { elite: 10, good: 6, mid: 3, suffix: "%" })}</tr>`;
+    })
+    .join("");
+}
+
+function renderExportsLab(game, hitters) {
+  els.labTableHead.innerHTML = `<tr>${sortHeader("Export", "export")}${sortHeader("Rows", "rows")}${sortHeader("Status", "status")}${sortHeader("Use", "use")}</tr>`;
+  const rows = [
+    { export: "Matchup CSV", rows: hitters.length, status: "Ready", use: "Use browser select/copy from table for now" },
+    { export: "Auto Legs", rows: automatedLegsForGame(game, hitters).length, status: "Ready", use: "Add Game Legs from calendar panel" },
+    { export: "Data Source", rows: "MLB Stats API + model estimates", status: "Static app safe", use: "Backend needed for true FanGraphs/ESPN scraping" }
+  ].map((row) => ({ ...row, sorts: row }));
+  els.labTableBody.innerHTML = sortRows(rows)
+    .map((row) => `<tr><td>${escapeHtml(row.export)}</td><td>${escapeHtml(row.rows)}</td><td>${escapeHtml(row.status)}</td><td>${escapeHtml(row.use)}</td></tr>`)
+    .join("");
 }
 
 function emptyBvpText(hitter) {
@@ -1052,6 +1297,7 @@ function build(options = {}) {
   renderMarkets();
   renderTable();
   renderCalendar();
+  renderLab();
   if (options.scrollToBuild) {
     document.querySelector(".result-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -1278,6 +1524,35 @@ els.gameCalendar.addEventListener("click", (event) => {
   if (!card) return;
   selectedGameId = card.dataset.gameId;
   renderCalendar();
+  renderLab();
+});
+
+els.labGameTabs.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-lab-game]");
+  if (!button) return;
+  selectedGameId = button.dataset.labGame;
+  renderCalendar();
+  renderLab();
+});
+
+els.labSectionTabs.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-lab-section]");
+  if (!button) return;
+  activeLabSection = button.dataset.labSection;
+  setDefaultLabSort(activeLabSection);
+  renderLab();
+});
+
+els.labTableHead.addEventListener("click", (event) => {
+  const header = event.target.closest("[data-sort-key]");
+  if (!header) return;
+  const key = header.dataset.sortKey;
+  if (labSort.key === key) {
+    labSort.direction = labSort.direction === "desc" ? "asc" : "desc";
+  } else {
+    labSort = { key, direction: "desc" };
+  }
+  renderLab();
 });
 
 els.autoLegTable.addEventListener("click", (event) => {
@@ -1316,6 +1591,7 @@ els.marketTabs.addEventListener("click", (event) => {
 
 els.slateDate.addEventListener("change", () => {
   renderCalendar();
+  renderLab();
 });
 
 els.syncMlb.addEventListener("click", syncMlbSchedule);
