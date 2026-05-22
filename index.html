@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MLB Parlay Builder</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">MLB edge board</p>
+            <h1>Parlay Builder</h1>
+          </div>
+          <div class="top-actions">
+            <button class="icon-button" id="loadSample" title="Load sample slate" aria-label="Load sample slate">
+              <span aria-hidden="true">R</span>
+            </button>
+            <button class="primary-button" id="buildParlays">Build Parlays</button>
+          </div>
+        </header>
+
+        <section class="control-grid" aria-label="Builder controls">
+          <label>
+            <span>Legs</span>
+            <input id="legCount" type="number" min="4" max="25" step="1" value="6" />
+          </label>
+          <label>
+            <span>Stake</span>
+            <input id="stake" type="number" min="1" step="1" value="10" />
+          </label>
+          <label>
+            <span>Minimum edge</span>
+            <input id="minEdge" type="number" step="0.1" value="0" />
+          </label>
+          <label>
+            <span>Max legs per game</span>
+            <input id="maxPerGame" type="number" min="1" max="6" step="1" value="2" />
+          </label>
+          <label>
+            <span>Strategy</span>
+            <select id="strategy">
+              <option value="balanced">Balanced</option>
+              <option value="safe">Highest hit rate</option>
+              <option value="value">Best value</option>
+              <option value="plus">Plus-money hunt</option>
+            </select>
+          </label>
+          <label>
+            <span>Bankroll</span>
+            <input id="bankroll" type="number" min="0" step="1" value="250" />
+          </label>
+        </section>
+
+        <section class="panel market-panel">
+          <div class="panel-title">
+            <div>
+              <h2>Markets</h2>
+              <span class="muted-note" id="marketSummary">All available markets</span>
+            </div>
+          </div>
+          <div class="market-tabs" id="marketTabs"></div>
+        </section>
+
+        <section class="panel calendar-panel">
+          <div class="panel-title">
+            <div>
+              <h2>Slate Calendar</h2>
+              <span class="muted-note">Games, probable pitchers, and hitter matchups</span>
+            </div>
+            <label class="date-control">
+              <span>Date</span>
+              <input id="slateDate" type="date" value="2026-05-22" />
+            </label>
+          </div>
+          <div class="calendar-layout">
+            <div class="game-list" id="gameCalendar"></div>
+            <div class="matchup-board">
+              <div class="matchup-header" id="matchupHeader"></div>
+              <div class="table-wrap matchup-wrap">
+                <table class="matchup-table">
+                  <thead>
+                    <tr>
+                      <th>Hitter</th>
+                      <th>Pitcher</th>
+                      <th>Side</th>
+                      <th>Prop Angle</th>
+                      <th>Matchup</th>
+                      <th>Board Play</th>
+                    </tr>
+                  </thead>
+                  <tbody id="matchupTable"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="split">
+          <section class="panel board-panel">
+            <div class="panel-title">
+              <h2>Leg Board</h2>
+              <div class="compact-actions">
+                <button id="addLeg">Add Leg</button>
+                <button id="clearBoard">Clear</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Status</th>
+                    <th>Player / Prop</th>
+                    <th>Team</th>
+                    <th>Opp</th>
+                    <th>Game</th>
+                    <th>Prob</th>
+                    <th>Odds</th>
+                    <th>Edge</th>
+                    <th>Market</th>
+                    <th>Score</th>
+                  </tr>
+                </thead>
+                <tbody id="legTable"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <aside class="panel result-panel">
+            <div class="panel-title">
+              <h2>Best Build</h2>
+              <span id="riskBadge" class="risk-badge">Ready</span>
+            </div>
+            <div class="metrics">
+              <div>
+                <span>Hit chance</span>
+                <strong id="parlayProb">--</strong>
+              </div>
+              <div>
+                <span>Payout odds</span>
+                <strong id="parlayOdds">--</strong>
+              </div>
+              <div>
+                <span>Profit</span>
+                <strong id="profit">--</strong>
+              </div>
+              <div>
+                <span>EV</span>
+                <strong id="expectedValue">--</strong>
+              </div>
+            </div>
+            <div class="bet-sizing">
+              <div>
+                <span>Suggested unit</span>
+                <strong id="unitSize">--</strong>
+              </div>
+              <div>
+                <span>Full Kelly</span>
+                <strong id="kelly">--</strong>
+              </div>
+            </div>
+            <ol id="selectedLegs" class="selected-list"></ol>
+            <div id="warnings" class="warnings"></div>
+          </aside>
+        </section>
+
+        <section class="panel ladder-panel">
+          <div class="panel-title">
+            <h2>Leg Ladder</h2>
+            <span class="muted-note">4 to 25 legs from the current board</span>
+          </div>
+          <div class="ladder-grid" id="ladderGrid"></div>
+        </section>
+
+        <section class="panel import-panel">
+          <div class="panel-title">
+            <h2>Paste Board</h2>
+            <button id="importText">Import</button>
+          </div>
+          <textarea id="pasteBox" spellcheck="false" placeholder="Paste CSV rows:
+Player,Prop,Team,Opponent,Game,Probability,Odds,Edge,Streak,Market,Book
+Juan Soto,Over 0.5 runs,NYM,MIA,NYM @ MIA,80,+106,31.5,7,Runs,DraftKings"></textarea>
+        </section>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
