@@ -68,12 +68,16 @@
           <div class="panel-title">
             <div>
               <h2>Slate Calendar</h2>
-              <span class="muted-note">Games, probable pitchers, and hitter matchups</span>
+              <span class="muted-note" id="dataStatus">Games, probable pitchers, and hitter matchups</span>
             </div>
-            <label class="date-control">
-              <span>Date</span>
-              <input id="slateDate" type="date" value="2026-05-22" />
-            </label>
+            <div class="calendar-actions">
+              <label class="date-control">
+                <span>Date</span>
+                <input id="slateDate" type="date" value="2026-05-22" />
+              </label>
+              <button id="syncMlb">Sync MLB</button>
+              <button id="syncLineups">Load Looks</button>
+            </div>
           </div>
           <div class="calendar-layout">
             <div class="game-list" id="gameCalendar"></div>
@@ -86,6 +90,7 @@
                       <th>Hitter</th>
                       <th>Pitcher</th>
                       <th>Side</th>
+                      <th>BvP History</th>
                       <th>Prop Angle</th>
                       <th>Matchup</th>
                       <th>Board Play</th>
@@ -93,6 +98,27 @@
                   </thead>
                   <tbody id="matchupTable"></tbody>
                 </table>
+              </div>
+              <div class="auto-leg-panel">
+                <div class="auto-leg-title">
+                  <h3>Auto Legs</h3>
+                  <button id="addAllGameLegs">Add Game Legs</button>
+                </div>
+                <div class="table-wrap auto-leg-wrap">
+                  <table class="auto-leg-table">
+                    <thead>
+                      <tr>
+                        <th>Add</th>
+                        <th>Market</th>
+                        <th>Leg</th>
+                        <th>Prob</th>
+                        <th>Odds</th>
+                        <th>Why</th>
+                      </tr>
+                    </thead>
+                    <tbody id="autoLegTable"></tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
@@ -169,7 +195,7 @@
         <section class="panel ladder-panel">
           <div class="panel-title">
             <h2>Leg Ladder</h2>
-            <span class="muted-note">4 to 25 legs from the current board</span>
+            <span class="muted-note" id="ladderStatus">6-leg build is active</span>
           </div>
           <div class="ladder-grid" id="ladderGrid"></div>
         </section>

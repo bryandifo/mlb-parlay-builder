@@ -42,7 +42,7 @@ button {
   background: #1b202b;
   color: var(--text);
   border-radius: 8px;
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 14px;
   cursor: pointer;
 }
@@ -60,6 +60,7 @@ button:hover {
 .workspace {
   display: grid;
   gap: 18px;
+  min-width: 0;
 }
 
 .topbar {
@@ -67,6 +68,7 @@ button:hover {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  min-width: 0;
 }
 
 .eyebrow {
@@ -98,6 +100,7 @@ h2 {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .primary-button {
@@ -153,6 +156,7 @@ textarea:focus {
   grid-template-columns: minmax(0, 1fr) 390px;
   gap: 18px;
   align-items: start;
+  min-width: 0;
 }
 
 .panel {
@@ -160,6 +164,7 @@ textarea:focus {
   border-radius: 8px;
   background: rgba(17, 20, 27, 0.92);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.24);
+  min-width: 0;
 }
 
 .panel-title {
@@ -171,8 +176,15 @@ textarea:focus {
   padding: 14px;
 }
 
+.calendar-actions {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .date-control {
-  min-width: 180px;
+  min-width: 170px;
 }
 
 .market-tabs {
@@ -210,6 +222,7 @@ textarea:focus {
   grid-template-columns: 350px minmax(0, 1fr);
   gap: 14px;
   padding: 14px;
+  min-width: 0;
 }
 
 .game-list {
@@ -288,15 +301,49 @@ textarea:focus {
 }
 
 .matchup-wrap {
-  max-height: 398px;
+  max-height: 300px;
 }
 
 .matchup-table {
+  min-width: 1080px;
+}
+
+.auto-leg-table {
   min-width: 860px;
 }
 
 .matchup-table td {
   font-size: 14px;
+}
+
+.auto-leg-panel {
+  border-top: 1px solid var(--line);
+}
+
+.auto-leg-title {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.auto-leg-title h3 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.auto-leg-wrap {
+  max-height: 300px;
+}
+
+.auto-leg-table td {
+  font-size: 14px;
+}
+
+.add-leg-button {
+  min-height: 32px;
+  padding: 0 10px;
 }
 
 .angle-good {
@@ -317,6 +364,7 @@ textarea:focus {
 .table-wrap {
   overflow: auto;
   max-height: 610px;
+  max-width: 100%;
 }
 
 table {
@@ -502,6 +550,12 @@ td select {
   padding: 12px;
 }
 
+.ladder-card.active,
+.selected-build-row {
+  border-color: var(--green);
+  box-shadow: inset 3px 0 0 var(--green);
+}
+
 .ladder-card strong {
   display: block;
   font-size: 20px;
@@ -540,9 +594,70 @@ td select {
   }
 }
 
+@media (max-width: 860px) {
+  .app-shell {
+    padding: 16px;
+  }
+
+  .calendar-layout {
+    padding: 10px;
+  }
+
+  .game-list {
+    display: flex;
+    overflow-x: auto;
+    padding: 0 2px 8px;
+    scroll-snap-type: x proximity;
+  }
+
+  .game-card {
+    flex: 0 0 82%;
+    scroll-snap-align: start;
+  }
+
+  .matchup-wrap,
+  .auto-leg-wrap,
+  .table-wrap {
+    max-height: 430px;
+  }
+
+  .result-panel {
+    order: -1;
+  }
+
+  .market-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 16px;
+  }
+
+  .market-tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .ladder-grid {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(142px, 46%);
+    grid-template-columns: none;
+    overflow-x: auto;
+    padding-bottom: 16px;
+    scroll-snap-type: x proximity;
+  }
+
+  .ladder-card {
+    scroll-snap-align: start;
+  }
+
+  .metrics strong,
+  .bet-sizing strong {
+    font-size: 21px;
+  }
+}
+
 @media (max-width: 700px) {
   .app-shell {
-    padding: 14px;
+    padding: 12px;
   }
 
   .topbar,
@@ -556,6 +671,10 @@ td select {
     width: 100%;
   }
 
+  .topbar > div:first-child {
+    min-width: 0;
+  }
+
   .top-actions button,
   .compact-actions button {
     flex: 1;
@@ -563,8 +682,7 @@ td select {
 
   .control-grid,
   .metrics,
-  .bet-sizing,
-  .ladder-grid {
+  .bet-sizing {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -572,7 +690,79 @@ td select {
     min-width: 0;
   }
 
+  .calendar-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .market-tab {
     flex: 1 1 160px;
+  }
+
+  table {
+    min-width: 980px;
+  }
+
+  .matchup-table {
+    min-width: 1040px;
+  }
+
+  .auto-leg-table {
+    min-width: 820px;
+  }
+
+  th,
+  td {
+    padding: 9px 8px;
+  }
+
+  .selected-list {
+    padding-left: 32px;
+  }
+}
+
+@media (max-width: 520px) {
+  h1 {
+    font-size: 38px;
+  }
+
+  .control-grid,
+  .metrics,
+  .bet-sizing {
+    grid-template-columns: 1fr;
+  }
+
+  .calendar-actions button,
+  .calendar-actions label,
+  .top-actions button,
+  .compact-actions button,
+  .auto-leg-title button {
+    width: 100%;
+  }
+
+  .game-card {
+    flex-basis: 92%;
+  }
+
+  .panel-title {
+    padding: 12px;
+  }
+
+  .market-tabs,
+  .ladder-grid,
+  .metrics,
+  .bet-sizing,
+  .warnings {
+    padding: 12px;
+  }
+
+  .auto-leg-title {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .score-pill,
+  .risk-badge {
+    min-width: 64px;
   }
 }

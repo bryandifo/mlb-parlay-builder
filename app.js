@@ -35,7 +35,7 @@ const sampleLegs = [
   ["Logan Gilbert", "Alt over 7.5 strikeouts", "SEA", "KC", "SEA @ KC", 36, 310, 5.1, 0, "Alternate Strikeouts", "BetMGM"]
 ].map((row, index) => toLeg(row, index));
 
-const games = [
+const sampleGames = [
   {
     id: "hou-chc-2026-05-22",
     date: "2026-05-22",
@@ -219,9 +219,12 @@ const games = [
 ];
 
 let legs = sampleLegs;
+let games = sampleGames.map((game) => ({ ...game }));
 let lastBuild = [];
 let selectedGameId = "pit-tor-2026-05-22";
 let activeMarket = "All Markets";
+let activeLadderCount = Number(document.querySelector("#legCount")?.value || 6);
+const bvpCache = new Map();
 
 const els = {
   table: document.querySelector("#legTable"),
@@ -247,12 +250,18 @@ const els = {
   warnings: document.querySelector("#warnings"),
   riskBadge: document.querySelector("#riskBadge"),
   ladder: document.querySelector("#ladderGrid"),
+  ladderStatus: document.querySelector("#ladderStatus"),
   slateDate: document.querySelector("#slateDate"),
   gameCalendar: document.querySelector("#gameCalendar"),
   matchupHeader: document.querySelector("#matchupHeader"),
   matchupTable: document.querySelector("#matchupTable"),
   marketTabs: document.querySelector("#marketTabs"),
-  marketSummary: document.querySelector("#marketSummary")
+  marketSummary: document.querySelector("#marketSummary"),
+  dataStatus: document.querySelector("#dataStatus"),
+  syncMlb: document.querySelector("#syncMlb"),
+  syncLineups: document.querySelector("#syncLineups"),
+  autoLegTable: document.querySelector("#autoLegTable"),
+  addAllGameLegs: document.querySelector("#addAllGameLegs")
 };
 
 function toLeg(row, index = cryptoRandom()) {
@@ -424,8 +433,10 @@ function renderMarkets() {
 
 function renderTable() {
   els.table.innerHTML = "";
+  const selectedIds = new Set(lastBuild.map((leg) => leg.id));
   visibleLegs().forEach((leg) => {
     const tr = document.createElement("tr");
+    tr.className = selectedIds.has(leg.id) ? "selected-build-row" : "";
     tr.innerHTML = `
       <td>
         <div class="status-cell">
@@ -466,6 +477,223 @@ function gameLabel(game) {
   return `${game.away} @ ${game.home}`;
 }
 
+function teamAbbrev(team) {
+  return team?.abbreviation || team?.teamCode || team?.fileCode || team?.name || "TBD";
+}
+
+function pitcherFromMlbTeam(teamSide) {
+  const pitcher = teamSide?.probablePitcher;
+  return {
+    id: pitcher?.id,
+    name: pitcher?.fullName || "TBD",
+    hand: pitcher?.pitchHand?.code || pitcher?.pitchHand?.description?.slice(0, 1) || "-"
+  };
+}
+
+function gameFromMlb(rawGame) {
+  const away = rawGame.teams?.away?.team || {};
+  const home = rawGame.teams?.home?.team || {};
+  const date = new Date(rawGame.gameDate);
+  const time = Number.isNaN(date.getTime())
+    ? "TBD"
+    : date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+  return {
+    id: `mlb-${rawGame.gamePk}`,
+    gamePk: rawGame.gamePk,
+    date: els.slateDate.value,
+    time,
+    away: teamAbbrev(away).toUpperCase(),
+    home: teamAbbrev(home).toUpperCase(),
+    awayTeamId: away.id,
+    homeTeamId: home.id,
+    venue: rawGame.venue?.name || "TBD",
+    weather: rawGame.weather?.condition || "Weather pending",
+    park: rawGame.status?.detailedState || "Scheduled",
+    pitchers: {
+      away: pitcherFromMlbTeam(rawGame.teams?.away),
+      home: pitcherFromMlbTeam(rawGame.teams?.home)
+    },
+    hitters: [],
+    pitchersPool: []
+  };
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+  return response.json();
+}
+
+async function syncMlbSchedule() {
+  const date = els.slateDate.value;
+  els.dataStatus.textContent = `Syncing MLB slate for ${date}...`;
+  els.syncMlb.disabled = true;
+  try {
+    const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${encodeURIComponent(date)}&hydrate=probablePitcher,venue,weather`;
+    const data = await fetchJson(url);
+    const syncedGames = (data.dates?.[0]?.games || []).map(gameFromMlb);
+    if (!syncedGames.length) {
+      els.dataStatus.textContent = `No MLB games returned for ${date}. Keeping local sample slate.`;
+      return;
+    }
+    games = syncedGames;
+    selectedGameId = games[0].id;
+    els.dataStatus.textContent = `Synced ${games.length} MLB games. Loading roster looks...`;
+    await hydrateRosterLooksForGames(games);
+    els.dataStatus.textContent = `Synced ${games.length} MLB games and roster looks from MLB.com for ${date}.`;
+    renderCalendar();
+  } catch (error) {
+    els.dataStatus.textContent = `MLB sync failed. Static GitHub Pages can only use browser-friendly APIs. ${error.message}`;
+  } finally {
+    els.syncMlb.disabled = false;
+  }
+}
+
+async function fetchRoster(teamId) {
+  if (!teamId) return [];
+  const url = `https://statsapi.mlb.com/api/v1/teams/${teamId}/roster?rosterType=active&hydrate=person(batSide,pitchHand,primaryPosition)`;
+  const data = await fetchJson(url);
+  return data.roster || [];
+}
+
+function rosterPlayerName(entry) {
+  return entry?.person?.fullName || entry?.person?.boxscoreName || "Unknown player";
+}
+
+function rosterPosition(entry) {
+  return entry?.position?.abbreviation || entry?.person?.primaryPosition?.abbreviation || "";
+}
+
+function rosterBatHand(entry) {
+  return entry?.person?.batSide?.code || "-";
+}
+
+function rosterPitchHand(entry) {
+  return entry?.person?.pitchHand?.code || "-";
+}
+
+function hitterLooksFromRoster(roster, teamCode, opposingPitcher) {
+  return roster
+    .filter((entry) => rosterPosition(entry) !== "P")
+    .map((entry) => ({
+      playerId: entry.person?.id,
+      name: rosterPlayerName(entry),
+      team: teamCode,
+      hand: rosterBatHand(entry),
+      pitcherId: opposingPitcher.id,
+      pitcher: opposingPitcher.name,
+      angle: "Roster look",
+      grade: "Watch",
+      note: "Active-roster hitter. Upgrade only after lineup spot, weather, and market price are confirmed.",
+      boardPlay: "Add from Auto Legs"
+    }));
+}
+
+function pitcherLooksFromRoster(roster, teamCode, opponentCode) {
+  return roster
+    .filter((entry) => rosterPosition(entry) === "P")
+    .map((entry) => ({
+      id: entry.person?.id,
+      name: rosterPlayerName(entry),
+      team: teamCode,
+      opponent: opponentCode,
+      hand: rosterPitchHand(entry),
+      probable: false
+    }));
+}
+
+function dedupeByName(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = String(item.name || "").toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function hydrateRosterLooksForGame(game) {
+  if (!game?.awayTeamId || !game?.homeTeamId) return game;
+  const [awayRoster, homeRoster] = await Promise.all([
+    fetchRoster(game.awayTeamId),
+    fetchRoster(game.homeTeamId)
+  ]);
+  const awayHitters = hitterLooksFromRoster(awayRoster, game.away, game.pitchers.home);
+  const homeHitters = hitterLooksFromRoster(homeRoster, game.home, game.pitchers.away);
+  const awayPitchers = pitcherLooksFromRoster(awayRoster, game.away, game.home);
+  const homePitchers = pitcherLooksFromRoster(homeRoster, game.home, game.away);
+  const probablePitchers = [
+    { ...game.pitchers.away, team: game.away, opponent: game.home, probable: true },
+    { ...game.pitchers.home, team: game.home, opponent: game.away, probable: true }
+  ].filter((pitcher) => pitcher.name && pitcher.name !== "TBD");
+
+  game.hitters = dedupeByName([...awayHitters, ...homeHitters]);
+  game.pitchersPool = dedupeByName([...probablePitchers, ...awayPitchers, ...homePitchers]);
+  return game;
+}
+
+async function hydrateRosterLooksForGames(targetGames) {
+  const chunks = [];
+  for (let index = 0; index < targetGames.length; index += 4) {
+    chunks.push(targetGames.slice(index, index + 4));
+  }
+  for (const chunk of chunks) {
+    await Promise.all(chunk.map(hydrateRosterLooksForGame));
+  }
+}
+
+function playerNameFromBoxscorePlayer(playerEntry) {
+  return playerEntry?.person?.fullName || playerEntry?.person?.boxscoreName || "Unknown player";
+}
+
+function hitterRowsFromBoxscoreTeam(team, teamCode, opposingPitcher) {
+  const players = Object.values(team?.players || {});
+  return players
+    .filter((player) => player.battingOrder)
+    .sort((a, b) => Number(a.battingOrder) - Number(b.battingOrder))
+    .map((player) => ({
+      playerId: player.person?.id,
+      name: playerNameFromBoxscorePlayer(player),
+      team: teamCode,
+      hand: player?.person?.batSide?.code || "-",
+      pitcherId: opposingPitcher.id,
+      pitcher: opposingPitcher.name,
+      angle: "Lineup",
+      grade: "Watch",
+      note: `Batting order ${String(player.battingOrder).slice(0, -2) || "posted"}. Add a board leg once you choose the market.`,
+      boardPlay: "Lineup player"
+    }));
+}
+
+async function syncSelectedGameLineups() {
+  const game = games.find((item) => item.id === selectedGameId);
+  if (!game?.gamePk) {
+    els.dataStatus.textContent = "Roster looks need an MLB-synced game. Click Sync MLB first.";
+    return;
+  }
+  els.dataStatus.textContent = `Loading roster looks and posted lineups for ${gameLabel(game)}...`;
+  els.syncLineups.disabled = true;
+  try {
+    await hydrateRosterLooksForGame(game);
+    const boxscore = await fetchJson(`https://statsapi.mlb.com/api/v1/game/${game.gamePk}/boxscore`);
+    const awayHitters = hitterRowsFromBoxscoreTeam(boxscore.teams?.away, game.away, game.pitchers.home);
+    const homeHitters = hitterRowsFromBoxscoreTeam(boxscore.teams?.home, game.home, game.pitchers.away);
+    const hitters = [...awayHitters, ...homeHitters];
+    if (hitters.length) {
+      const lineupNames = new Set(hitters.map((hitter) => hitter.name.toLowerCase()));
+      game.hitters = [...hitters, ...game.hitters.filter((hitter) => !lineupNames.has(hitter.name.toLowerCase()))];
+      els.dataStatus.textContent = `Loaded ${hitters.length} posted lineup hitters plus roster looks for ${gameLabel(game)}.`;
+    } else {
+      els.dataStatus.textContent = `Lineups are not posted yet, but roster looks are loaded for ${gameLabel(game)}.`;
+    }
+    renderCalendar();
+  } catch (error) {
+    els.dataStatus.textContent = `Lineup sync failed: ${error.message}`;
+  } finally {
+    els.syncLineups.disabled = false;
+  }
+}
+
 function renderCalendar() {
   const slateGames = getGamesForDate();
   if (!slateGames.some((game) => game.id === selectedGameId)) {
@@ -493,6 +721,7 @@ function renderCalendar() {
       <div class="game-meta">
         <b>${boardCount} board legs</b>
         <b>${game.hitters.length} hitter looks</b>
+        <b>${game.pitchersPool?.length || 0} pitcher looks</b>
       </div>
     `;
     els.gameCalendar.appendChild(card);
@@ -528,11 +757,67 @@ function gradeClass(grade) {
   return "angle-risk";
 }
 
+function emptyBvpText(hitter) {
+  if (!hitter.playerId || !hitter.pitcherId) return "Sync MLB for BvP IDs";
+  return "Loading BvP...";
+}
+
+function statValue(stat, keys) {
+  for (const key of keys) {
+    if (stat?.[key] !== undefined && stat?.[key] !== null) return stat[key];
+  }
+  return 0;
+}
+
+function formatBvpStat(stat) {
+  if (!stat) return "No BvP history";
+  const atBats = Number(statValue(stat, ["atBats", "ab"]));
+  const plateAppearances = Number(statValue(stat, ["plateAppearances", "pa"]));
+  const hits = Number(statValue(stat, ["hits", "h"]));
+  const homeRuns = Number(statValue(stat, ["homeRuns", "homeruns", "hr"]));
+  const rbi = Number(statValue(stat, ["rbi", "runsBattedIn"]));
+  const strikeOuts = Number(statValue(stat, ["strikeOuts", "strikeouts", "so"]));
+  const walks = Number(statValue(stat, ["baseOnBalls", "walks", "bb"]));
+  const avg = stat.avg || (atBats ? (hits / atBats).toFixed(3).replace(/^0/, "") : ".000");
+  const ops = stat.ops || "--";
+  const sample = plateAppearances ? `${plateAppearances} PA` : `${atBats} AB`;
+  if (!atBats && !plateAppearances) return "No BvP history";
+  return `${hits}-${atBats} (${avg}) | OPS ${ops} | ${homeRuns} HR | ${rbi} RBI | ${strikeOuts} K/${walks} BB | ${sample}`;
+}
+
+async function fetchBvpStat(hitterId, pitcherId) {
+  const key = `${hitterId}-${pitcherId}`;
+  if (bvpCache.has(key)) return bvpCache.get(key);
+  const url = `https://statsapi.mlb.com/api/v1/people/${hitterId}/stats?stats=vsPlayer&group=hitting&opposingPlayerId=${pitcherId}&sportId=1`;
+  const data = await fetchJson(url);
+  const stat = data.stats?.[0]?.splits?.[0]?.stat || null;
+  const formatted = formatBvpStat(stat);
+  bvpCache.set(key, formatted);
+  return formatted;
+}
+
+async function hydrateBvpForVisibleHitters(hitters) {
+  const withIds = hitters.filter((hitter) => hitter.playerId && hitter.pitcherId);
+  const chunk = withIds.slice(0, 30);
+  await Promise.all(
+    chunk.map(async (hitter) => {
+      const cell = document.querySelector(`[data-bvp-key="${hitter.playerId}-${hitter.pitcherId}"]`);
+      if (!cell) return;
+      try {
+        cell.textContent = await fetchBvpStat(hitter.playerId, hitter.pitcherId);
+      } catch (error) {
+        cell.textContent = "BvP unavailable";
+      }
+    })
+  );
+}
+
 function renderMatchups() {
   const game = games.find((item) => item.id === selectedGameId);
   if (!game) {
     els.matchupHeader.innerHTML = `<strong>No game selected</strong><span>Pick a date with loaded games.</span>`;
     els.matchupTable.innerHTML = "";
+    els.autoLegTable.innerHTML = "";
     return;
   }
 
@@ -560,7 +845,8 @@ function renderMatchups() {
   const hitters = [...boardHitters, ...manualHitters];
 
   if (!hitters.length) {
-    els.matchupTable.innerHTML = `<tr><td colspan="6">No hitter legs loaded for this game yet. Add/import legs with game set to ${escapeHtml(gameLabel(game))}.</td></tr>`;
+    els.matchupTable.innerHTML = `<tr><td colspan="7">No hitter legs loaded for this game yet. Add/import legs with game set to ${escapeHtml(gameLabel(game))}.</td></tr>`;
+    renderAutoLegs(game, []);
     return;
   }
 
@@ -573,6 +859,7 @@ function renderMatchups() {
           <td><strong>${escapeHtml(hitter.name)}</strong><br><span class="muted-note">${escapeHtml(hitter.team)} bats ${escapeHtml(hitter.hand)}</span></td>
           <td>${escapeHtml(pitcher)}<br><span class="muted-note">throws ${escapeHtml(pHand)}</span></td>
           <td>${escapeHtml(hitter.hand)} vs ${escapeHtml(pHand)}</td>
+          <td data-bvp-key="${escapeHtml(`${hitter.playerId || ""}-${hitter.pitcherId || ""}`)}">${escapeHtml(emptyBvpText(hitter))}</td>
           <td><span class="${gradeClass(hitter.grade)}">${escapeHtml(hitter.grade)}</span> ${escapeHtml(hitter.angle)}</td>
           <td>${escapeHtml(hitter.note)}</td>
           <td>${escapeHtml(hitter.boardPlay || bestBoardPlay(hitter))}</td>
@@ -580,6 +867,124 @@ function renderMatchups() {
       `;
     })
     .join("");
+  renderAutoLegs(game, hitters);
+  hydrateBvpForVisibleHitters(hitters);
+}
+
+function existingLegKey(leg) {
+  return `${leg.player}|${leg.prop}|${leg.team}|${leg.game}|${leg.category}`.toLowerCase();
+}
+
+function autoLegKey(leg) {
+  return `${leg.player}|${leg.prop}|${leg.team}|${leg.game}|${leg.category}`.toLowerCase();
+}
+
+function suggestedLeg(player, prop, team, opponent, game, probability, odds, edge, category, reason) {
+  return {
+    player,
+    prop,
+    team,
+    opponent,
+    game: gameLabel(game),
+    probability,
+    odds,
+    edge,
+    streak: 0,
+    category,
+    book: "Auto",
+    reason
+  };
+}
+
+function pitcherSuggestions(game) {
+  const pool = game.pitchersPool?.length
+    ? game.pitchersPool
+    : [
+        { ...game.pitchers.away, team: game.away, opponent: game.home, probable: true },
+        { ...game.pitchers.home, team: game.home, opponent: game.away, probable: true }
+      ];
+  const suggestions = [];
+  pool.forEach((pitcher) => {
+    if (!pitcher?.name || pitcher.name === "TBD") return;
+    const standardProb = pitcher.probable ? 58 : 42;
+    const standardOdds = pitcher.probable ? -115 : 145;
+    const standardEdge = pitcher.probable ? 3.8 : 1.4;
+    const altProb = pitcher.probable ? 34 : 21;
+    const altOdds = pitcher.probable ? 220 : 410;
+    const altEdge = pitcher.probable ? 2.6 : 0.7;
+    suggestions.push(
+      suggestedLeg(pitcher.name, "Over 4.5 strikeouts", pitcher.team, pitcher.opponent, game, standardProb, standardOdds, standardEdge, "Pitcher Strikeouts", pitcher.probable ? "Probable starter from MLB schedule." : "Roster pitcher look; confirm role before using."),
+      suggestedLeg(pitcher.name, "Alt over 6.5 strikeouts", pitcher.team, pitcher.opponent, game, altProb, altOdds, altEdge, "Alternate Strikeouts", pitcher.probable ? "Higher-variance ladder leg from probable starter." : "Deep alternate K look; use only if pitcher is confirmed to work bulk innings.")
+    );
+  });
+  return suggestions;
+}
+
+function gameLineSuggestions(game) {
+  return [
+    suggestedLeg(game.home, "Moneyline", game.home, game.away, game, 54, -115, 1.8, "Game Lines", "Home side template from MLB schedule."),
+    suggestedLeg(game.away, "Moneyline", game.away, game.home, game, 46, 105, 1.0, "Game Lines", "Away side template from MLB schedule."),
+    suggestedLeg(`${game.away}/${game.home}`, "Over 7.5 runs", game.home, game.away, game, 52, -110, 0.8, "Game Lines", "Total template; adjust after weather and lineup confirmation.")
+  ];
+}
+
+function hitterSuggestions(game, hitters) {
+  const source = hitters.filter((hitter) => hitter.name && hitter.name !== "Unknown player");
+  return source.flatMap((hitter, index) => {
+    const opponent = hitter.team === game.away ? game.home : game.away;
+    const lineupBoost = hitter.angle === "Lineup" ? 6 : 0;
+    const depthPenalty = Math.min(10, Math.floor(index / 6) * 2);
+    return [
+      suggestedLeg(hitter.name, "Over 0.5 hits", hitter.team, opponent, game, clamp(58 + lineupBoost - depthPenalty, 35, 74), -150, 2.4, "Player Hits", "Roster hitter look against listed probable pitcher."),
+      suggestedLeg(hitter.name, "Over 0.5 runs", hitter.team, opponent, game, clamp(39 + lineupBoost - depthPenalty, 22, 58), 130, 1.8, "Player Runs", "Run leg template; strongest for top-order hitters."),
+      suggestedLeg(hitter.name, "Over 1.5 H+R+RBI", hitter.team, opponent, game, clamp(43 + lineupBoost - depthPenalty, 26, 62), -105, 2.1, "Player Hits+Runs+RBIs", "Combines contact plus lineup-context paths."),
+      suggestedLeg(hitter.name, "Over 1.5 total bases", hitter.team, opponent, game, clamp(35 + lineupBoost - depthPenalty, 18, 54), 125, 1.9, "Player Total Bases", "Extra-base template; check handedness and park before locking.")
+    ];
+  });
+}
+
+function automatedLegsForGame(game, hitters = []) {
+  const existing = new Set(legs.map(existingLegKey));
+  return [...gameLineSuggestions(game), ...pitcherSuggestions(game), ...hitterSuggestions(game, hitters)]
+    .filter((leg) => !existing.has(autoLegKey(leg)))
+    .sort((a, b) => scoreLeg(b) - scoreLeg(a));
+}
+
+function addAutoLeg(suggestion) {
+  legs.unshift(toLeg([
+    suggestion.player,
+    suggestion.prop,
+    suggestion.team,
+    suggestion.opponent,
+    suggestion.game,
+    suggestion.probability,
+    suggestion.odds,
+    suggestion.edge,
+    suggestion.streak,
+    suggestion.category,
+    suggestion.book
+  ], Date.now()));
+}
+
+function renderAutoLegs(game, hitters) {
+  const suggestions = automatedLegsForGame(game, hitters);
+  if (!suggestions.length) {
+    els.autoLegTable.innerHTML = `<tr><td colspan="6">All generated legs for this game are already on the board.</td></tr>`;
+    return;
+  }
+  els.autoLegTable.innerHTML = suggestions
+    .map((leg, index) => `
+      <tr>
+        <td><button class="add-leg-button" data-auto-leg="${index}">Add</button></td>
+        <td>${escapeHtml(leg.category)}</td>
+        <td><strong>${escapeHtml(leg.player)}</strong><br><span class="muted-note">${escapeHtml(leg.prop)}</span></td>
+        <td>${leg.probability}%</td>
+        <td>${formatAmerican(leg.odds)}</td>
+        <td>${escapeHtml(leg.reason)}</td>
+      </tr>
+    `)
+    .join("");
+  els.autoLegTable.dataset.suggestions = JSON.stringify(suggestions);
 }
 
 function escapeHtml(value) {
@@ -594,9 +999,10 @@ function findLeg(id) {
   return legs.find((leg) => leg.id === id);
 }
 
-function build() {
+function build(options = {}) {
   const requested = clamp(Number(els.legCount.value) || 4, 4, 25);
   els.legCount.value = requested;
+  activeLadderCount = requested;
   const minEdge = Number(els.minEdge.value) || 0;
   const maxPerGame = clamp(Number(els.maxPerGame.value) || 1, 1, 6);
 
@@ -646,6 +1052,9 @@ function build() {
   renderMarkets();
   renderTable();
   renderCalendar();
+  if (options.scrollToBuild) {
+    document.querySelector(".result-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 }
 
 function renderResults(selected, warnings) {
@@ -791,18 +1200,16 @@ function simulateBuild(count) {
 
 function renderLadder() {
   els.ladder.innerHTML = "";
+  els.ladderStatus.textContent = `${activeLadderCount}-leg build is active with ${lastBuild.length} selected`;
   for (let count = 4; count <= 25; count += 1) {
     const selected = simulateBuild(count);
     const probability = selected.reduce((product, leg) => product * (leg.probability / 100), 1) * estimateCorrelationPenalty(selected);
     const decimalOdds = selected.reduce((product, leg) => product * americanToDecimal(leg.odds), 1);
     const card = document.createElement("button");
-    card.className = "ladder-card";
+    card.className = `ladder-card ${count === activeLadderCount ? "active" : ""}`;
     card.type = "button";
-    card.innerHTML = `<strong>${count} legs</strong><span>${selected.length}/${count} found</span><span>${pct(probability, 3)} hit chance</span><span>${formatAmerican(decimalToAmerican(decimalOdds))}</span>`;
-    card.addEventListener("click", () => {
-      els.legCount.value = count;
-      build();
-    });
+    card.dataset.ladderCount = String(count);
+    card.innerHTML = `<strong>${count} legs</strong><span>${selected.length}/${count} will show in Best Build</span><span>${pct(probability, 3)} hit chance</span><span>${formatAmerican(decimalToAmerican(decimalOdds))}</span>`;
     els.ladder.appendChild(card);
   }
 }
@@ -873,6 +1280,33 @@ els.gameCalendar.addEventListener("click", (event) => {
   renderCalendar();
 });
 
+els.autoLegTable.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-auto-leg]");
+  if (!button) return;
+  const suggestions = JSON.parse(els.autoLegTable.dataset.suggestions || "[]");
+  const suggestion = suggestions[Number(button.dataset.autoLeg)];
+  if (!suggestion) return;
+  addAutoLeg(suggestion);
+  activeMarket = suggestion.category;
+  build();
+});
+
+els.ladder.addEventListener("click", (event) => {
+  const card = event.target.closest("[data-ladder-count]");
+  if (!card) return;
+  const count = clamp(Number(card.dataset.ladderCount) || 4, 4, 25);
+  els.legCount.value = count;
+  activeLadderCount = count;
+  build({ scrollToBuild: true });
+});
+
+els.addAllGameLegs.addEventListener("click", () => {
+  const suggestions = JSON.parse(els.autoLegTable.dataset.suggestions || "[]");
+  suggestions.slice(0, 12).forEach(addAutoLeg);
+  activeMarket = "All Markets";
+  build();
+});
+
 els.marketTabs.addEventListener("click", (event) => {
   const tab = event.target.closest("[data-market]");
   if (!tab) return;
@@ -883,6 +1317,9 @@ els.marketTabs.addEventListener("click", (event) => {
 els.slateDate.addEventListener("change", () => {
   renderCalendar();
 });
+
+els.syncMlb.addEventListener("click", syncMlbSchedule);
+els.syncLineups.addEventListener("click", syncSelectedGameLineups);
 
 [els.legCount, els.stake, els.minEdge, els.maxPerGame, els.strategy, els.bankroll].forEach((el) => {
   el.addEventListener("input", build);
